@@ -63,6 +63,8 @@ impl Collector {
         Report {
             v: 1,
             agent: env!("CARGO_PKG_VERSION").to_string(),
+            endpoint: None, // set by the sender loop (main.rs)
+            auto_update: None,
             ts,
             interval: self.interval,
             host,

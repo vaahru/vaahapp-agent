@@ -32,8 +32,10 @@ struct Payload {
     endpoints: Vec<String>,
 }
 
-/// Verifies a signed list and returns its endpoints (trailing slashes trimmed).
-pub fn verify(raw: &str, public_key_b64: &str, now: i64) -> Result<Vec<String>, String> {
+/// Checks a `{"payload": b64, "sig": b64}` document against the public key and returns the payload
+/// bytes. Shared by the endpoint list and the release manifest (update.rs); each then parses its
+/// own payload shape, so one signed file can never be read as the other.
+pub fn verify_signed(raw: &str, public_key_b64: &str) -> Result<Vec<u8>, String> {
     let b64 = base64::engine::general_purpose::STANDARD;
     let s: Signed = serde_json::from_str(raw).map_err(|e| format!("bad json: {e}"))?;
     let key_bytes: [u8; 32] = b64
@@ -45,6 +47,12 @@ pub fn verify(raw: &str, public_key_b64: &str, now: i64) -> Result<Vec<String>, 
     let payload = b64.decode(&s.payload).map_err(|_| "bad payload encoding")?;
     let sig_bytes: [u8; 64] = b64.decode(&s.sig).ok().and_then(|x| x.try_into().ok()).ok_or("bad signature encoding")?;
     key.verify(&payload, &Signature::from_bytes(&sig_bytes)).map_err(|_| "signature does not verify")?;
+    Ok(payload)
+}
+
+/// Verifies a signed list and returns its endpoints (trailing slashes trimmed).
+pub fn verify(raw: &str, public_key_b64: &str, now: i64) -> Result<Vec<String>, String> {
+    let payload = verify_signed(raw, public_key_b64)?;
     let p: Payload = serde_json::from_slice(&payload).map_err(|e| format!("bad payload: {e}"))?;
     if p.v != 1 {
         return Err(format!("unsupported version {}", p.v));

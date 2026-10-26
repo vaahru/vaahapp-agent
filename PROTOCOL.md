@@ -11,11 +11,15 @@ The agent only pushes. There is no inbound port and no command channel.
 
 ## Report
 Every field except `v`, `agent` and `ts` may be missing or `null`; a missing collector never fails a report.
+`endpoint` is the base URL the agent is sending to (a relay or the server itself), `auto_update` whether
+self-update is switched on (both since 0.3.0).
 
 ```json
 {
   "v": 1,
-  "agent": "0.1.0",
+  "agent": "0.3.0",
+  "endpoint": "https://app.vaah.ru",
+  "auto_update": false,
   "ts": 1761300000,
   "interval": 60,
   "host": {

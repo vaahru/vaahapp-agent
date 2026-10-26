@@ -9,8 +9,9 @@ This repository exists so you can see exactly what the agent does on your machin
 - Linux x86_64 and aarch64 with systemd. Built to run on old systems too (static binary, no glibc
   dependency); tested on Debian 12, Ubuntu 24.04 and CentOS 7.
 - **Outbound only**: it opens no listening port.
-- **Read-only**: it never runs anything the server sends. There is no remote command channel and no
-  auto-update. It changes nothing on your server apart from its own spool file.
+- **Read-only**: it never runs anything the server sends. There is no remote command channel. It changes
+  nothing on your server apart from its own spool file, and it never installs or fixes packages.
+- **Self-update is opt-in and signed**: off unless you install with `--auto-update` (see below).
 
 ## What it collects
 
@@ -64,7 +65,7 @@ Several sources need root: the journal, `fail2ban-client`, the docker socket, `s
 `/etc/shadow`. The systemd unit limits what root can do:
 - `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only` and `PrivateTmp`
 - writes allowed only to `/var/lib/vaahapp`
-- `MemoryMax=64M` and `CPUQuota=10%`
+- `MemoryMax=128M` and `CPUQuota=10%`
 
 All privileged reads live in [`src/collect/`](src/collect/).
 
@@ -83,6 +84,24 @@ curl -fsSL https://app.vaah.ru/install.sh | sudo sh -s -- --url https://app.vaah
 - installs and starts the `vaahapp-agent` systemd service, then sends a test report
 
 Upgrade: `--upgrade`. Remove everything: `--uninstall`.
+
+### Self-update (opt-in)
+
+Add `--auto-update` to the install or upgrade command to let the agent update itself; `--no-auto-update`
+turns it off again. It is stored as `auto_update = true` in the config, and it is **off by default**.
+
+When on, a daily timer (`vaahapp-agent-update.timer`, random delay up to 6 h) runs
+`vaahapp-agent --self-update` ([`src/update.rs`](src/update.rs)):
+1. It downloads `release.json` from the vaahapp server. The file must be signed with the same ed25519
+   key as the endpoint list (public key compiled into the binary), must not have expired, and must
+   name a **newer** version. Anything else is refused, so the server or a relay cannot push an
+   unsigned build or a downgrade.
+2. It downloads the binary for your architecture and checks its SHA-256 against the signed manifest.
+3. It checks the new binary starts, swaps it in (keeping the old one as `vaahapp-agent.old`), restarts
+   the service and sends a test report. If the test fails, the old binary is put back.
+
+The update runs as its own oneshot unit (`vaahapp-agent-update.service`), because the main service is
+not allowed to write to `/usr/local/bin`. The main service keeps all its restrictions.
 
 Config `/etc/vaahapp/agent.toml`:
 

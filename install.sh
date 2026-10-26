@@ -6,14 +6,18 @@
 #   upgrade:    sh install.sh --url https://app.vaah.ru --upgrade                   (keeps the config)
 #   uninstall:  sh install.sh --uninstall
 #   check only: sh install.sh --url https://app.vaah.ru --check                     (changes nothing)
+#   self-update: add --auto-update (or --no-auto-update) to install/upgrade. Off unless you ask for it;
+#               without either flag an upgrade keeps the current choice.
 set -eu
 
-URL=""; TOKEN=""; CONFIG=""; MODE=install
+URL=""; TOKEN=""; CONFIG=""; MODE=install; AUTO=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --url) URL="${2%/}"; shift 2 ;;
     --token) TOKEN="$2"; shift 2 ;;
     --config) CONFIG="$2"; shift 2 ;;
+    --auto-update) AUTO=true; shift ;;
+    --no-auto-update) AUTO=false; shift ;;
     --upgrade) MODE=upgrade; shift ;;
     --uninstall) MODE=uninstall; shift ;;
     --check) MODE=check; shift ;;
@@ -75,8 +79,8 @@ VAR=/var/lib/vaahapp
 command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] || { echo "systemd is required" >&2; exit 1; }
 
 if [ "$MODE" = uninstall ]; then
-  systemctl disable --now vaahapp-agent 2>/dev/null || true
-  rm -f "$BIN" "$UNIT"
+  systemctl disable --now vaahapp-agent vaahapp-agent-update.timer 2>/dev/null || true
+  rm -f "$BIN" "$BIN.old" "$BIN.new" "$UNIT" /etc/systemd/system/vaahapp-agent-update.service /etc/systemd/system/vaahapp-agent-update.timer
   rm -rf "$ETC" "$VAR"
   systemctl daemon-reload
   echo "vaahapp agent removed"
@@ -132,7 +136,7 @@ ExecStart=/usr/local/bin/vaahapp-agent --config /etc/vaahapp/agent.toml
 Restart=always
 RestartSec=10
 Nice=10
-MemoryMax=64M
+MemoryMax=128M
 CPUQuota=10%
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -146,9 +150,59 @@ ProtectControlGroups=yes
 WantedBy=multi-user.target
 EOF
 
+# Self-update (opt-in). The flag is stored in agent.toml so upgrades keep it.
+if [ -n "$AUTO" ]; then
+  if grep -q '^auto_update *=' "$ETC/agent.toml"; then
+    sed -i "s/^auto_update *=.*/auto_update = $AUTO/" "$ETC/agent.toml"
+  else
+    printf 'auto_update = %s\n' "$AUTO" >> "$ETC/agent.toml"
+  fi
+fi
+UPD=/etc/systemd/system/vaahapp-agent-update
+if grep -q '^auto_update *= *true' "$ETC/agent.toml"; then
+  # Separate oneshot unit: it must replace /usr/local/bin/vaahapp-agent, which the hardened main
+  # unit cannot write. It only installs releases signed with the vaahapp key (see update.rs).
+  cat > "$UPD.service" <<'EOF'
+[Unit]
+Description=vaahapp agent self-update (signed releases only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vaahapp-agent --self-update --config /etc/vaahapp/agent.toml
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+TimeoutStartSec=15min
+EOF
+  cat > "$UPD.timer" <<'EOF'
+[Unit]
+Description=Daily vaahapp agent self-update check
+
+[Timer]
+OnBootSec=1h
+OnUnitActiveSec=1d
+RandomizedDelaySec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  AUTO_ON=1
+else
+  systemctl disable --now vaahapp-agent-update.timer >/dev/null 2>&1 || true
+  rm -f "$UPD.service" "$UPD.timer"
+  AUTO_ON=0
+fi
+
 systemctl daemon-reload
 systemctl enable vaahapp-agent >/dev/null 2>&1
 systemctl restart vaahapp-agent
+if [ "$AUTO_ON" = 1 ]; then
+  systemctl enable --now vaahapp-agent-update.timer >/dev/null 2>&1
+  echo "self-update: on (daily, signed releases only; turn off with --upgrade --no-auto-update)"
+fi
 "$BIN" --version
 "$BIN" --test --config "$ETC/agent.toml" || { echo "agent installed but the test report failed (see above)" >&2; exit 1; }
 echo "vaahapp agent running (systemctl status vaahapp-agent)"

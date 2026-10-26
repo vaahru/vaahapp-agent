@@ -24,6 +24,9 @@ pub struct Config {
     /// Signed endpoint list (see endpoints.rs). "" disables it.
     #[serde(default = "default_endpoints_url")]
     pub endpoints_url: String,
+    /// Opt-in: let vaahapp-agent-update.timer install newer signed releases (update.rs). Off by default.
+    #[serde(default)]
+    pub auto_update: bool,
 }
 
 fn default_endpoints_url() -> String {

@@ -8,6 +8,38 @@ const TEST_PUB: &str = "P50S/2EtYkbbwBFLj3c0rEBnSY12J1Kw76dGsVuQvSc=";
 const SIGNED: &str = r#"{"payload": "eyJ2IjoxLCJpc3N1ZWQiOjE3OTI4NzU4MzIsImV4cGlyZXMiOjIxMDgyMzU4MzIsImVuZHBvaW50cyI6WyJodHRwczovL2FwcC52YWFoLnJ1IiwiaHR0cHM6Ly9yZWxheS52YWFoLnJ1LyJdfQ==",
   "sig": "R3QZ5we+av18MJRhvesXbmQcjBwmJHwTio7g2lUpXA0UrzE6l/R/wB77v2pJRjErW3ob82LvQgeyAYesKCegBg=="}"#;
 
+// Release manifest for version 9.9.9 (files = sha256 of the bytes "fake-agent-binary") and an endpoint
+// list, both signed with a second throwaway TEST key (not the real key).
+const REL_PUB: &str = "T9w/6JuHm/Eo82dGAtYwm5EHPFkCK8hIdUJa/NSuznU=";
+const REL_OK: &str = r#"{"payload": "eyJleHBpcmVzIjoyMTA4NDE0MDYxLCJmaWxlcyI6eyJhYXJjaDY0IjoiMzU3ZDQ4YTQ2NDcwNjhlZmZmMGViN2U4MjBiZWI1MmJjYjYzMzRkOTdhYzY2ZWFmNDQzOTc2ZGFkMTI1Nzg4YyIsIng4Nl82NCI6IjM1N2Q0OGE0NjQ3MDY4ZWZmZjBlYjdlODIwYmViNTJiY2I2MzM0ZDk3YWM2NmVhZjQ0Mzk3NmRhZDEyNTc4OGMifSwiaXNzdWVkIjoxNzkzMDU0MDYxLCJraW5kIjoicmVsZWFzZSIsInYiOjEsInZlcnNpb24iOiI5LjkuOSJ9",
+  "sig": "LlMyGIKU4zcmySzefzT6H4qs+Qrp7vGz9mgyqaN3u9az4Z1J+OWj4gNn55mgO87hj0ktP7ZWinF3iz0Vjw9XDw=="}"#;
+const REL_EPLIST: &str = r#"{"payload": "eyJ2IjoxLCJpc3N1ZWQiOjE3OTMwNTQwNjEsImV4cGlyZXMiOjIxMDg0MTQwNjEsImVuZHBvaW50cyI6WyJodHRwczovL2EuZXhhbXBsZSJdfQ==",
+  "sig": "ZGwiKTpLnxaw0kmqa0Ai3+OLx9xWHG58yhhR6gtdhOQ/UyDXwpX4LxAmIUIS7xSUAOQJ3HGFHoPtYplZ1BNkDg=="}"#;
+
+#[test]
+fn release_manifest() {
+    use crate::update::{newer, verify_release};
+    let now = 1_793_054_061;
+    let r = verify_release(REL_OK, REL_PUB, now).expect("valid manifest");
+    assert_eq!(r.version, "9.9.9");
+    assert_eq!(r.files["x86_64"], "357d48a4647068efff0eb7e820beb52bcb6334d97ac66eaf443976dad125788c");
+    // Wrong key (the real one), expired, tampered payload.
+    assert!(verify_release(REL_OK, crate::endpoints::PUBLIC_KEY, now).is_err());
+    assert!(verify_release(REL_OK, REL_PUB, 2_200_000_000).is_err());
+    let tampered = REL_OK.replace("eyJleHBpcmVz", "eyJleHBpcmVa");
+    assert!(verify_release(&tampered, REL_PUB, now).is_err());
+    // A signed endpoint list is not a release manifest, and the reverse.
+    assert!(verify_release(REL_EPLIST, REL_PUB, now).is_err());
+    assert!(crate::endpoints::verify(REL_OK, REL_PUB, now).is_err());
+    assert!(crate::endpoints::verify(REL_EPLIST, REL_PUB, now).is_ok());
+    // Versions: only strictly newer installs, never a downgrade or garbage.
+    assert!(newer("0.2.2", "0.3.0"));
+    assert!(newer("0.9.9", "0.10.0"));
+    assert!(!newer("0.3.0", "0.3.0"));
+    assert!(!newer("0.3.0", "0.2.9"));
+    assert!(!newer("0.3.0", "1.x"));
+}
+
 #[test]
 fn resolver_v4_first() {
     use crate::resolve::{split, V4First};

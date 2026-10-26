@@ -1,6 +1,6 @@
 [package]
 name = "vaahapp-agent"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 description = "vaahapp monitoring agent: pushes server metrics to app.vaah.ru"
 license = "MIT"
@@ -15,6 +15,7 @@ flate2 = "1"
 libc = "0.2"
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 base64 = "0.22"
+sha2 = "0.10"
 
 [profile.release]
 opt-level = "s"

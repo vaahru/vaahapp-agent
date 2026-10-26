@@ -85,6 +85,12 @@ impl Sender {
         &self.candidates[self.current]
     }
 
+    /// All endpoints, the one in use first, then the rest in failover order.
+    pub fn ordered(&self) -> Vec<String> {
+        let n = self.candidates.len();
+        (0..n).map(|i| self.candidates[(self.current + i) % n].clone()).collect()
+    }
+
     fn post_to(&self, base: &str, reports: &[Report]) -> Outcome {
         let body = serde_json::json!({ "reports": reports });
         let mut gz = GzEncoder::new(Vec::new(), Compression::default());

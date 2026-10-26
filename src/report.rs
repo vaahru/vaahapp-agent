@@ -7,6 +7,12 @@ use std::collections::BTreeMap;
 pub struct Report {
     pub v: u32,
     pub agent: String,
+    /// Base URL the agent is currently sending to (shows "via relay" in the dashboard).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// Whether self-update is enabled (auto_update in agent.toml).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_update: Option<bool>,
     pub ts: i64,
     pub interval: u64,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -5,6 +5,7 @@
 //!   vaahapp-agent --test                               collect and send one report, report the result
 //!   vaahapp-agent --audit                              print the security baseline audit
 //!   vaahapp-agent --packages                           print the package inventory sent for CVE scans
+//!   vaahapp-agent --self-update                        install a newer signed release (only if auto_update = true)
 //!   vaahapp-agent --version
 
 mod collect;
@@ -13,6 +14,7 @@ mod endpoints;
 mod report;
 mod resolve;
 mod send;
+mod update;
 mod util;
 #[cfg(test)]
 mod tests;
@@ -65,6 +67,7 @@ fn main() {
             spool: config::DEFAULT_SPOOL.into(),
             urls: vec![],
             endpoints_url: String::new(),
+            auto_update: false,
         });
         let mut c = collect::Collector::new(&cfg);
         // Wait so the rate-based fields (cpu, net) have a baseline.
@@ -87,9 +90,27 @@ fn main() {
     sender.set_signed(endpoints::load(&sender.agent, &cfg.endpoints_url, endpoints_at));
     let mut collector = collect::Collector::new(&cfg);
 
+    if args.iter().any(|a| a == "--self-update") {
+        if !cfg.auto_update {
+            println!("auto_update is off in {path}: nothing to do");
+            return;
+        }
+        match update::run(&sender.agent, &sender.ordered(), util::now()) {
+            Ok(msg) => util::log(&format!("self-update: {msg}")),
+            Err(e) => {
+                util::log(&format!("self-update failed: {e}"));
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
     if args.iter().any(|a| a == "--test") {
         thread::sleep(Duration::from_secs(2));
-        match sender.post(&[collector.collect()]) {
+        let mut r = collector.collect();
+        r.endpoint = Some(sender.current_url().to_string());
+        r.auto_update = Some(cfg.auto_update);
+        match sender.post(&[r]) {
             send::Outcome::Ok => println!("ok: report accepted by {}", sender.current_url()),
             send::Outcome::Retry(e) | send::Outcome::Drop(e) => {
                 println!("failed: {e}");
@@ -109,7 +130,10 @@ fn main() {
             endpoints_at = util::now();
             sender.set_signed(endpoints::load(&sender.agent, &cfg.endpoints_url, endpoints_at));
         }
-        sender.deliver(collector.collect());
+        let mut r = collector.collect();
+        r.endpoint = Some(sender.current_url().to_string());
+        r.auto_update = Some(cfg.auto_update);
+        sender.deliver(r);
         next += every;
         let now = Instant::now();
         if next <= now {
