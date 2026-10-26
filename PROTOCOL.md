@@ -52,7 +52,7 @@ self-update is switched on (both since 0.3.0).
 - `security.f2b_banned`: refreshed every 5 min. `updates_*` and `reboot_required`: refreshed hourly.
   Between refreshes the last value is repeated.
 - `containers`: `null` when docker is not installed, `[]` when it has no containers.
-- `sites` (0.4.0+, unless `discover_sites = false`): the websites the web server configs mention, e.g.
+- `sites` (0.4.0+, unless `discover_sites = false`): the websites the nginx / Apache / Caddy config files mention, e.g.
   `[{"domain": "example.com", "server": "nginx", "tls": true, "wildcard": false}]`. Present only when the
   list changed and once a day; the server replaces its copy with each list it receives (`[]` = none).
 

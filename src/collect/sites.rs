@@ -1,15 +1,16 @@
 //! Website discovery: which domains this server's web servers are configured for.
 //!
-//! Reads (read-only): `nginx -T`, `apachectl -S`, the host's /etc/caddy/Caddyfile and Caddyfiles
-//! mounted into running Caddy containers (caddy.rs). Sends only the domain names, which web server
-//! has them, and whether TLS is configured. No paths, no other configuration.
-//! Turn off with `discover_sites = false` in agent.toml.
+//! Reads the configuration files directly (nothing is executed; `nginx -T` / `apachectl -S` would
+//! need write access the hardened service does not have): nginx.conf and Apache's main config with
+//! their includes, the host's /etc/caddy/Caddyfile and Caddyfiles mounted into running Caddy
+//! containers (caddy.rs). Sends only the domain names, which web server has them, and whether TLS is
+//! configured. No paths, no other configuration. Turn off with `discover_sites = false`.
 
 use super::caddy;
 use crate::report::Site;
-use crate::util::{now, run, which};
+use crate::util::now;
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
 
 /// Re-read the configs this often; send when the list changed, and at least once a day.
 const CHECK_EVERY: i64 = 1800;
@@ -47,21 +48,75 @@ impl SitesCollector {
 /// All web servers on this host, merged (one row per domain; TLS if any server has it).
 pub fn discover() -> Vec<Site> {
     let mut all: Vec<Site> = vec![];
-    if let Some(bin) = which("nginx") {
-        if let Some((_, out)) = run(&bin, &["-T"], Duration::from_secs(20)) {
-            all.extend(parse_nginx(&out));
+    for main in ["/etc/nginx/nginx.conf", "/usr/local/nginx/conf/nginx.conf"] {
+        if Path::new(main).exists() {
+            let dir = Path::new(main).parent().unwrap_or(Path::new("/"));
+            let text = read_with_includes(Path::new(main), dir, false, 0);
+            all.extend(parse_nginx(&text));
+            break;
         }
     }
-    for name in ["apache2ctl", "apachectl", "httpd"] {
-        if let Some(bin) = which(name) {
-            if let Some((_, out)) = run(&bin, &["-S"], Duration::from_secs(20)) {
-                all.extend(parse_apache(&out));
-                break;
-            }
+    for (main, root) in [("/etc/apache2/apache2.conf", "/etc/apache2"), ("/etc/httpd/conf/httpd.conf", "/etc/httpd")] {
+        if Path::new(main).exists() {
+            let text = read_with_includes(Path::new(main), Path::new(root), true, 0);
+            all.extend(parse_apache_conf(&text));
+            break;
         }
     }
     all.extend(caddy::discover());
     merge(all)
+}
+
+/// A file followed by the files its include directives name (nginx `include x;`, Apache `Include` /
+/// `IncludeOptional`), each appended after the file. Relative paths resolve against `root`; a `*` in
+/// the last path component is expanded. Depth-limited.
+pub fn read_with_includes(file: &Path, root: &Path, apache: bool, depth: usize) -> String {
+    let Ok(text) = std::fs::read_to_string(file) else { return String::new() };
+    let mut out = text.clone();
+    if depth >= 6 {
+        return out;
+    }
+    for line in text.lines() {
+        let l = line.split('#').next().unwrap_or("").trim();
+        let mut w = l.split_whitespace();
+        let (Some(k), Some(arg)) = (w.next(), w.next()) else { continue };
+        let is_inc = if apache { k.eq_ignore_ascii_case("include") || k.eq_ignore_ascii_case("includeoptional") } else { k == "include" };
+        if !is_inc {
+            continue;
+        }
+        let arg = arg.trim_end_matches(';').trim_matches('"');
+        let p = if arg.starts_with('/') { PathBuf::from(arg) } else { root.join(arg) };
+        for f in glob(&p) {
+            if f.is_file() {
+                out.push('\n');
+                out.push_str(&read_with_includes(&f, root, apache, depth + 1));
+            } else if apache && f.is_dir() {
+                // Apache: "Include dir" includes every file in it.
+                for g in glob(&f.join("*")) {
+                    out.push('\n');
+                    out.push_str(&read_with_includes(&g, root, apache, depth + 1));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Files matching a path whose last component may contain one `*` (sorted).
+pub fn glob(p: &Path) -> Vec<PathBuf> {
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+    let Some((pre, suf)) = name.split_once('*') else { return if p.exists() { vec![p.to_path_buf()] } else { vec![] } };
+    let parent = p.parent().unwrap_or(Path::new("/"));
+    let mut files: Vec<PathBuf> = std::fs::read_dir(parent)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|f| f.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(pre) && n.ends_with(suf) && !n.starts_with('.')))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    files
 }
 
 pub fn merge(all: Vec<Site>) -> Vec<Site> {
@@ -171,25 +226,30 @@ pub fn parse_nginx(conf: &str) -> Vec<Site> {
     out
 }
 
-/// `apachectl -S`: "port 443 namevhost example.com (…)", "*:443 example.com (…)", "alias www.example.com".
-pub fn parse_apache(out: &str) -> Vec<Site> {
+/// Apache config text (main file + includes): `ServerName` / `ServerAlias` inside `<VirtualHost …>`;
+/// TLS when the vhost listens on :443 or has `SSLEngine on`.
+pub fn parse_apache_conf(text: &str) -> Vec<Site> {
     let mut sites = vec![];
-    let mut port = 0u16;
-    for line in out.lines() {
-        let w: Vec<&str> = line.split_whitespace().collect();
-        if let Some(i) = w.iter().position(|x| *x == "namevhost") {
-            port = i.checked_sub(1).and_then(|j| w[j].parse().ok()).unwrap_or(0);
-            if let Some(name) = w.get(i + 1) {
-                sites.extend(site(name, "apache", port == 443));
+    // Open vhost: (names, tls)
+    let mut cur: Option<(Vec<String>, bool)> = None;
+    for line in text.lines() {
+        let l = line.split('#').next().unwrap_or("").trim();
+        let low = l.to_ascii_lowercase();
+        if low.starts_with("<virtualhost") {
+            let tls = low.trim_end_matches('>').split_whitespace().skip(1).any(|a| a.ends_with(":443"));
+            cur = Some((vec![], tls));
+        } else if low.starts_with("</virtualhost") {
+            if let Some((names, tls)) = cur.take() {
+                sites.extend(names.iter().filter_map(|n| site(n, "apache", tls)));
             }
-        } else if w.first() == Some(&"alias") {
-            if let Some(name) = w.get(1) {
-                sites.extend(site(name, "apache", port == 443));
+        } else if let Some((names, tls)) = cur.as_mut() {
+            let mut w = l.split_whitespace();
+            match w.next().map(|k| k.to_ascii_lowercase()).as_deref() {
+                Some("servername") => names.extend(w.next().map(|n| n.split(':').next().unwrap_or(n).to_string())),
+                Some("serveralias") => names.extend(w.map(str::to_string)),
+                Some("sslengine") if low.ends_with(" on") => *tls = true,
+                _ => {}
             }
-        } else if w.len() >= 3 && w[0].contains(':') && w[2].starts_with('(') {
-            // "*:443   example.com (/etc/apache2/sites-enabled/x.conf:1)": the only vhost on that address.
-            port = w[0].rsplit(':').next().and_then(|p| p.parse().ok()).unwrap_or(0);
-            sites.extend(site(w[1], "apache", port == 443));
         }
     }
     sites

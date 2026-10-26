@@ -29,7 +29,7 @@ This repository exists so you can see exactly what the agent does on your machin
 | Installed package names and versions, for the CVE scan | `dpkg-query -W` / `rpm -qa` | daily, and after packages change |
 | Security baseline audit (see below) | see below | every 6 h |
 | Hostname, OS, kernel, CPU model and count, boot time | `/proc`, `/etc/os-release` | start, daily, on change |
-| Websites: domain names your web servers are configured for, which web server (nginx / Apache / Caddy), TLS on/off | `nginx -T`, `apachectl -S`, `/etc/caddy/Caddyfile` and Caddyfiles mounted into running Caddy containers (`docker inspect`) | checked every 30 min, sent when changed and daily |
+| Websites: domain names your web servers are configured for, which web server (nginx / Apache / Caddy), TLS on/off | `/etc/nginx/nginx.conf`, Apache's main config (`apache2.conf` / `httpd.conf`) and the files they include, `/etc/caddy/Caddyfile` and Caddyfiles mounted into running Caddy containers (`docker inspect`). Read only; nothing is executed | checked every 30 min, sent when changed and daily |
 
 **Never collected:** file contents, environment variables, process command lines, user names (except the
 names of extra UID-0 accounts or accounts without a password, when the audit finds them), passwords, keys,

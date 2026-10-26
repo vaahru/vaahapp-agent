@@ -52,17 +52,40 @@ server {
 }
 
 #[test]
-fn apache_s_output() {
-    let s = "VirtualHost configuration:
-*:443                  is a NameVirtualHost
-         default server site.ru (/etc/apache2/sites-enabled/site-ssl.conf:2)
-         port 443 namevhost site.ru (/etc/apache2/sites-enabled/site-ssl.conf:2)
-                 alias www.site.ru
-         port 443 namevhost shop.site.ru (/etc/apache2/sites-enabled/shop.conf:1)
-*:80                   old.site.ru (/etc/apache2/sites-enabled/old.conf:1)
-ServerRoot: \"/etc/apache2\"
-";
-    assert_eq!(names(&sites::merge(sites::parse_apache(s))), vec!["old.site.ru:plain", "shop.site.ru:tls", "site.ru:tls", "www.site.ru:tls"]);
+fn apache_conf() {
+    let s = r#"
+ServerName fallback.local
+<VirtualHost *:80>
+    ServerName old.site.ru
+    DocumentRoot /var/www/old
+</VirtualHost>
+<VirtualHost *:443>
+    ServerName site.ru:443
+    ServerAlias www.site.ru   # main
+    SSLEngine on
+</VirtualHost>
+<VirtualHost 10.0.0.5:8443>
+    ServerName shop.site.ru
+    SSLEngine On
+</VirtualHost>
+"#;
+    assert_eq!(names(&sites::merge(sites::parse_apache_conf(s))), vec!["old.site.ru:plain", "shop.site.ru:tls", "site.ru:tls", "www.site.ru:tls"]);
+}
+
+#[test]
+fn nginx_files_with_includes() {
+    // nginx.conf including a directory of vhosts (relative path), like Debian / CloudPanel.
+    let dir = std::env::temp_dir().join(format!("vah-nginx-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sites-enabled")).unwrap();
+    std::fs::write(dir.join("nginx.conf"), "http {\n  include mime.types;\n  include sites-enabled/*.conf;\n}\n").unwrap();
+    std::fs::write(dir.join("sites-enabled/a.conf"), "server { listen 443 ssl; server_name a.example.com; }\n").unwrap();
+    std::fs::write(dir.join("sites-enabled/b.conf"), "server { listen 80; server_name b.example.com; }\n").unwrap();
+    std::fs::write(dir.join("sites-enabled/.hidden.conf"), "server { server_name hidden.example.com; }\n").unwrap();
+    let files = sites::glob(&dir.join("sites-enabled/*.conf"));
+    assert_eq!(files.len(), 2, "dotfiles skipped");
+    let text = sites::read_with_includes(&dir.join("nginx.conf"), &dir, false, 0);
+    assert_eq!(names(&sites::merge(sites::parse_nginx(&text))), vec!["a.example.com:tls", "b.example.com:plain"]);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
