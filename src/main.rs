@@ -11,6 +11,7 @@ mod collect;
 mod config;
 mod endpoints;
 mod report;
+mod resolve;
 mod send;
 mod util;
 #[cfg(test)]

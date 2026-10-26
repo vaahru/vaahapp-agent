@@ -9,6 +9,20 @@ const SIGNED: &str = r#"{"payload": "eyJ2IjoxLCJpc3N1ZWQiOjE3OTI4NzU4MzIsImV4cGl
   "sig": "R3QZ5we+av18MJRhvesXbmQcjBwmJHwTio7g2lUpXA0UrzE6l/R/wB77v2pJRjErW3ob82LvQgeyAYesKCegBg=="}"#;
 
 #[test]
+fn resolver_v4_first() {
+    use crate::resolve::{split, V4First};
+    use ureq::Resolver;
+    assert_eq!(split("relay.vaah.ru:443"), Some(("relay.vaah.ru", 443)));
+    assert_eq!(split("[::1]:8080"), Some(("::1", 8080)));
+    assert_eq!(V4First.resolve("127.0.0.1:443").unwrap(), vec!["127.0.0.1:443".parse().unwrap()]);
+    // "localhost" resolves from /etc/hosts; any IPv4 answer must come before IPv6 ones.
+    let addrs = V4First.resolve("localhost:80").unwrap();
+    assert!(!addrs.is_empty());
+    let first_v6 = addrs.iter().position(|a| a.is_ipv6()).unwrap_or(addrs.len());
+    assert!(addrs[first_v6..].iter().all(|a| a.is_ipv6()));
+}
+
+#[test]
 fn signed_endpoint_list() {
 	let now = 1_792_900_000;
 	assert_eq!(endpoints::verify(SIGNED, TEST_PUB, now).unwrap(), vec!["https://app.vaah.ru", "https://relay.vaah.ru"]);

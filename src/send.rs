@@ -49,6 +49,7 @@ impl Sender {
             .timeout_connect(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .user_agent(concat!("vaahapp-agent/", env!("CARGO_PKG_VERSION")))
+            .resolver(crate::resolve::V4First)
             .build();
         Sender {
             agent,
