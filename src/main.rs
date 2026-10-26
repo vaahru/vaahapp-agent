@@ -5,6 +5,7 @@
 //!   vaahapp-agent --test                               collect and send one report, report the result
 //!   vaahapp-agent --audit                              print the security baseline audit
 //!   vaahapp-agent --packages                           print the package inventory sent for CVE scans
+//!   vaahapp-agent --sites                              print the websites found in nginx/Apache/Caddy configs
 //!   vaahapp-agent --self-update                        install a newer signed release (only if auto_update = true)
 //!   vaahapp-agent --version
 
@@ -18,6 +19,8 @@ mod update;
 mod util;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_sites;
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -37,6 +40,13 @@ fn main() {
     if args.iter().any(|a| a == "--audit") {
         for i in collect::audit::run_all() {
             println!("{:<20} {:<5} {}", i.id, i.status, i.value);
+        }
+        return;
+    }
+    if args.iter().any(|a| a == "--sites") {
+        // Exactly what website discovery would send (even if discover_sites = false in the config).
+        for s in collect::sites::discover() {
+            println!("{:<40} {:<7} {}{}", s.domain, s.server, if s.tls { "tls" } else { "-" }, if s.wildcard { " wildcard" } else { "" });
         }
         return;
     }
@@ -68,6 +78,7 @@ fn main() {
             urls: vec![],
             endpoints_url: String::new(),
             auto_update: false,
+            discover_sites: true,
         });
         let mut c = collect::Collector::new(&cfg);
         // Wait so the rate-based fields (cpu, net) have a baseline.

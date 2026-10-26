@@ -27,6 +27,13 @@ pub struct Config {
     /// Opt-in: let vaahapp-agent-update.timer install newer signed releases (update.rs). Off by default.
     #[serde(default)]
     pub auto_update: bool,
+    /// Website discovery (collect/sites.rs): domain names from nginx/Apache/Caddy configs. On by default.
+    #[serde(default = "default_true")]
+    pub discover_sites: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_endpoints_url() -> String {

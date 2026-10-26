@@ -35,6 +35,18 @@ pub struct Report {
     pub packages: Option<Packages>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit: Option<Vec<AuditItem>>,
+    /// Discovered websites (collect/sites.rs); only when the list changed or once a day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sites: Option<Vec<Site>>,
+}
+
+/// A domain this server's web server is configured for. server: nginx | apache | caddy.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Site {
+    pub domain: String,
+    pub server: String,
+    pub tls: bool,
+    pub wildcard: bool,
 }
 
 /// Installed packages. `items` = [name, version, source package, source version].

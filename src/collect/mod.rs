@@ -2,11 +2,13 @@
 //! sshd -T, /etc/shadow) lives here, so a future non-root mode only has to touch this module.
 
 pub mod audit;
+pub mod caddy;
 pub mod disk;
 pub mod docker;
 pub mod net;
 pub mod packages;
 pub mod security;
+pub mod sites;
 pub mod sys;
 pub mod systemd;
 
@@ -22,6 +24,7 @@ pub struct Collector {
     sec: security::SecurityCollector,
     pkgs: packages::PackagesCollector,
     audit: audit::AuditCollector,
+    sites: sites::SitesCollector,
     extra_units: Vec<String>,
     interval: u64,
     host_at: i64,
@@ -36,6 +39,7 @@ impl Collector {
             sec: security::SecurityCollector::new(),
             pkgs: packages::PackagesCollector::new(),
             audit: audit::AuditCollector::new(),
+            sites: sites::SitesCollector::new(cfg.discover_sites),
             extra_units: cfg.services.clone(),
             interval: cfg.interval,
             host_at: 0,
@@ -77,6 +81,7 @@ impl Collector {
             security: Some(self.sec.collect()),
             packages: self.pkgs.collect(),
             audit: self.audit.collect(),
+            sites: self.sites.collect(),
         }
     }
 }
