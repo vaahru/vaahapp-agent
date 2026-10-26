@@ -42,7 +42,7 @@ precheck() {
   done
   if [ -n "$URL" ]; then
     hdr=$(mktemp)
-    if command -v curl >/dev/null 2>&1 && curl -fsS -m 15 -D "$hdr" -o /dev/null "$URL/healthz" 2>/dev/null; then
+    if command -v curl >/dev/null 2>&1 && curl -fsS --connect-timeout 8 -m 15 --retry 4 --retry-delay 2 -D "$hdr" -o /dev/null "$URL/healthz" 2>/dev/null; then
       ok "HTTPS to $URL"
       # Clock skew against the server's Date header (reports older than 25 h are rejected).
       sdate=$(sed -n 's/^[Dd]ate: //p' "$hdr" | tr -d '\r')
@@ -50,7 +50,7 @@ precheck() {
         skew=$(( $(date +%s) - s )); [ $skew -lt 0 ] && skew=$(( -skew ))
         if [ $skew -le 120 ]; then ok "clock within ${skew}s of the server"; else warn "clock is ${skew}s off the server: fix time sync"; fi
       fi
-    elif ! command -v curl >/dev/null 2>&1 && wget -q -T 15 -O /dev/null "$URL/healthz" 2>/dev/null; then
+    elif ! command -v curl >/dev/null 2>&1 && wget -q -T 15 -t 4 -O /dev/null "$URL/healthz" 2>/dev/null; then
       ok "HTTPS to $URL"
     else
       fail "cannot reach $URL/healthz (outbound HTTPS blocked?)"
@@ -94,8 +94,9 @@ case "$(uname -m)" in
 esac
 
 fetch() { # url dest
-  if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 3 -o "$2" "$1"
-  elif command -v wget >/dev/null 2>&1; then wget -q -O "$2" "$1"
+  # Short connect timeout + retries: some networks drop single connections at random.
+  if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 10 -m 180 --retry 6 --retry-delay 2 -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -q -T 15 -t 6 -O "$2" "$1"
   else echo "curl or wget is required" >&2; exit 1; fi
 }
 

@@ -14,6 +14,12 @@ const SPOOL_MAX: usize = 1440;
 const BATCH: usize = 60;
 /// While on a fallback endpoint, try the primary again this often.
 const PRIMARY_RETRY: i64 = 3600;
+/// Filtered routes (e.g. some networks to Cloudflare) drop single connections at random, so a failed
+/// pass over all endpoints is repeated a few times within one report interval.
+const PASSES: usize = 3;
+const PASS_PAUSE: Duration = Duration::from_secs(3);
+/// No new pass starts after this, so a send stays well inside a 60 s interval.
+const PASS_BUDGET: Duration = Duration::from_secs(30);
 
 pub enum Outcome {
     Ok,
@@ -101,9 +107,23 @@ impl Sender {
         }
     }
 
+    /// Delivers with up to PASSES passes over the endpoints while failures are network-type.
+    pub fn post(&mut self, reports: &[Report]) -> Outcome {
+        let start = std::time::Instant::now();
+        let mut o = self.pass(reports);
+        for _ in 1..PASSES {
+            if !try_next(&o) || start.elapsed() + PASS_PAUSE >= PASS_BUDGET {
+                break;
+            }
+            std::thread::sleep(PASS_PAUSE);
+            o = self.pass(reports);
+        }
+        o
+    }
+
     /// Posts to the current endpoint; on a network-type failure walks the other candidates and sticks
     /// with the first that works. Periodically returns to the primary.
-    pub fn post(&mut self, reports: &[Report]) -> Outcome {
+    fn pass(&mut self, reports: &[Report]) -> Outcome {
         if self.current != 0 && now() - self.primary_tried >= PRIMARY_RETRY {
             self.primary_tried = now();
             if let o @ Outcome::Ok = self.post_to(&self.candidates[0].clone(), reports) {
